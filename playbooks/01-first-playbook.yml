@@ -3,9 +3,9 @@
   hosts: docker_targets
   become: yes
   tasks:
-    - name: Install tree
+    - name: Install fd
       apk:
-        name: tree
+        name: fd
         state: present
         update_cache: yes
 

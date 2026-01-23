@@ -135,9 +135,9 @@ Create a new folder `playbooks` on the same level with `inventory.ini`, then a n
   hosts: docker_targets
   become: yes
   tasks:
-    - name: Install tree
+    - name: Install fd
       apk:
-        name: tree
+        name: fd
         state: present
         update_cache: yes
 
@@ -148,7 +148,7 @@ Create a new folder `playbooks` on the same level with `inventory.ini`, then a n
         mode: '0644'
 ```
 
-This playbook has two tasks, one to install the `tree` package, another for creating a `txt` file with a fixed content and permissions.
+This playbook has two tasks, one to install the `fd` package, another for creating a `txt` file with a fixed content and permissions.
 
 To install a package needs sudo access, `become: yes` does this for ansible, but we also have to enable sudo support in the inventory, so add the following to the `[docker_targets:vars]` section:
 
@@ -178,14 +178,14 @@ ansible-playbook -i inventory.ini playbooks/01-first-playbook.yml
 
 Then verify:
 ```bash
-ansible -i inventory.ini docker_targets -m command -a "tree"
+ansible -i inventory.ini docker_targets -m command -a "fd"
 ```
 
 ```bash
 ansible -i inventory.ini docker_targets -m command -a "cat /tmp/ansible_test.txt"
 ```
 
-You should see a tree for the first command and "Ansible works!" for the second command.
+You should see a list of files and folders for the first command and "Ansible works!" for the second command.
 
 Now if you run the playbook again, it should return that all the changes are OK (already there), no changes done (ok=3 changed=0):
 
@@ -209,7 +209,7 @@ container2                 : ok=3    changed=0    unreachable=0    failed=0    s
   - stop and remove both containers and create them again, including installing python
   - connect using ssh to each container and remove the changes manually
     - remove file from `tmp`: `sudo rm /tmp/ansible_test.txt`
-    - uninstall `tree` package: `sudo apk del tree`
+    - uninstall `fd` package: `sudo apk del fd`
 
 ## Next: 
 
