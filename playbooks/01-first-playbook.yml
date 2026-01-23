@@ -1,0 +1,16 @@
+---
+- name: First Ansible playbook
+  hosts: docker_targets
+  become: yes
+  tasks:
+    - name: Install tree
+      apk:
+        name: tree
+        state: present
+        update_cache: yes
+
+    - name: Create test file
+      copy:
+        content: "Ansible works!\n"
+        dest: /tmp/ansible_test.txt
+        mode: '0644'
