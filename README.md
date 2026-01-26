@@ -211,11 +211,16 @@ container2                 : ok=3    changed=0    unreachable=0    failed=0    s
     - remove file from `tmp`: `sudo rm /tmp/ansible_test.txt`
     - uninstall `fd` package: `sudo apk del fd`
 
-## Next: 
+## Additional steps
 
-Next steps (to be added later):
+At this stage, we have a basic idea about how Ansible works, we have simple example set up with Docker containers and a basic playbook. 
+
+Take these additional steps to build on the current state and introduce new concepts:
 - Switch to Ubuntu containers
 - Use SSH keys instead of password
 - Variables, handlers, roles
 - Linting + Molecule testing
 - GitHub Actions CI
+
+### Switch to Ubuntu containers
+
