@@ -1,0 +1,28 @@
+---
+- name: Copy SSH public key to all targets
+  hosts: docker_targets
+  become: yes
+  gather_facts: false
+
+  vars:
+    pub_key_path: "~/.ssh/ansible_lab_key.pub"
+
+  tasks:
+    - name: Ensure .ssh directory exists
+      file:
+        path: "~ansibleuser/.ssh"
+        state: directory
+        owner: ansibleuser
+        group: ansibleuser
+        mode: '0700'
+
+    - name: Copy public key to authorized_keys
+      authorized_key:
+        user: ansibleuser
+        key: "{{ lookup('file', pub_key_path) }}"
+        state: present
+        exclusive: no   # add, don't replace existing keys
+
+    - name: Debug - key added
+      debug:
+        msg: "Public key copied to {{ inventory_hostname }}"

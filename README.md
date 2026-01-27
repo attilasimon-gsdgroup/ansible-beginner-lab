@@ -263,5 +263,81 @@ Take these additional steps to build on the current state and introduce new conc
 - Linting + Molecule testing
 - GitHub Actions CI
 
-### Switch to Ubuntu containers
+### A1. Use SSH keys instead of password
 
+We can set up a SSH key to be used to access the targets, so that we don't have to use passwords.
+
+#### 1. Generate key pair in WSL:
+
+An existing key could also be used, but for learning a new key would be better.
+
+```bash
+ssh-keygen -t ed25519 -C "ansible-lab-key" -f ~/.ssh/ansible_lab_key
+```
+
+#### 2. Create a new playbook to copy public key to all targets
+
+Create `playbooks/02-copy-ssh-key.yml`:
+```yaml
+---
+- name: Copy SSH public key to all targets
+  hosts: docker_targets
+  become: yes
+  gather_facts: false
+
+  vars:
+    pub_key_path: "~/.ssh/ansible_lab_key.pub"
+
+  tasks:
+    - name: Ensure .ssh directory exists
+      file:
+        path: "~ansibleuser/.ssh"
+        state: directory
+        owner: ansibleuser
+        group: ansibleuser
+        mode: '0700'
+
+    - name: Copy public key to authorized_keys
+      authorized_key:
+        user: ansibleuser
+        key: "{{ lookup('file', pub_key_path) }}"
+        state: present
+        exclusive: no   # add, don't replace existing keys
+
+    - name: Debug - key added
+      debug:
+        msg: "Public key copied to {{ inventory_hostname }}"
+```
+
+Dry-run and then run the playbook:
+```bash
+ansible-playbook -i inventory.ini playbooks/02-copy-ssh-key.yml --check --diff
+ansible-playbook -i inventory.ini playbooks/02-copy-ssh-key.yml
+```
+
+#### 3. Update `inventory.ini` - remove `ansible_ssh_pass`, add key path:
+
+```ini
+[docker_targets:vars]
+ansible_user=ansibleuser
+ansible_ssh_private_key_file=~/.ssh/ansible_lab_key
+ansible_connection=ssh
+ansible_become=yes
+ansible_become_method=sudo
+ansible_become_pass=root
+```
+
+#### 4. Test with a ping:
+
+```bash
+ansible -i inventory.ini docker_targets -m ping
+```
+→ no password prompt should appear
+
+#### 5. Test with a playbook:
+
+```bash
+ansible-playbook -i inventory.ini playbooks/01-first-playbook.yml --check --diff
+ansible-playbook -i inventory.ini playbooks/01-first-playbook.yml
+```
+→ no password prompt should appear
