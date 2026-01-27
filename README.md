@@ -241,6 +241,14 @@ container2                 : ok=3    changed=0    unreachable=0    failed=0    s
 - Permission denied on docker.sock → add user to docker group + relogin
 - to undo changes, you have two possibilites, pick one:
   - stop and remove both containers and create them again
+    - `docker stop container{1,2}`
+    - `docker rm container{1,2}`
+    - then create the containers again:
+      ```bash
+      docker run -d --name container1 -p 2222:22 ansible-ubuntu-ssh
+      docker run -d --name container2 -p 2223:22 ansible-ubuntu-ssh
+      ```
+    - you will get the same errors as before so run the ssh commands at [Step 6](#6-test-connectivity) again
   - connect using ssh to each container and remove the changes manually
     - remove file from `tmp`: `sudo rm /tmp/ansible_test.txt`
     - uninstall `tree` package: `sudo apt remove tree`
