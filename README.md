@@ -7,12 +7,13 @@ Hands-on Ansible basics using Docker containers as targets on Windows + WSL2.
 - Windows 10/11 with WSL2
 - Docker Desktop installed and running
 - Basic terminal usage
+- Basic Docker knowledge
 
 ## 0. Get a general idea about Ansible
 
-- no need to do anything, just watch one or both videos, skip if not needed
-- 4 mins intro: https://www.youtube.com/watch?v=SuUnLqWpnEM
-- 16 mins intro: https://www.youtube.com/watch?v=1id6ERvfozo
+- no need to do anything, just watch one or both (recommended) videos, skip if not needed
+- 4 mins very basic intro: https://www.youtube.com/watch?v=SuUnLqWpnEM
+- 16 mins intro with a bit more details: https://www.youtube.com/watch?v=1id6ERvfozo
 
 (What follows is not based on any of these videos)
 
@@ -47,36 +48,43 @@ sudo usermod -aG docker $USER
 ```
 (close and reopen terminal)
 
-## 4. Create SSH-enabled test containers
+## 4. Create SSH-enabled containers for testing
 
-```bash
-mkdir -p ~/ansible-beginner-lab/{config1,config2}
-cd ~/ansible-beginner-lab
+Custom image based on Ubuntu, installing necessary software, adding password access, creating ansibleuser and exposing ssh port.
+
+### Dockerfile
+
+```dockerfile
+FROM ubuntu:22.04
+
+RUN apt-get update && apt-get install -y \
+        openssh-server \
+        python3 \
+        python3-apt \
+        sudo \
+    && mkdir /var/run/sshd \
+    && useradd -m -s /bin/bash ansibleuser \
+    && echo 'ansibleuser:root' | chpasswd \
+    && echo 'root:root' | chpasswd \
+    && echo 'ansibleuser ALL=(ALL) ALL' > /etc/sudoers.d/ansibleuser \
+    && chmod 0440 /etc/sudoers.d/ansibleuser \
+    && sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D"]
 ```
 
-Run both:
+### Build and run
 
 ```bash
-docker run -d --name container1 -p 2222:2222 \
-  -e PUID=1000 -e PGID=1000 -e TZ=Etc/UTC \
-  -e PASSWORD_ACCESS=true \
-  -e USER_NAME=ansibleuser \
-  -e USER_PASSWORD=root \
-  -e SUDO_ACCESS=true \
-  -v ~/ansible-beginner-lab/config1:/config \
-  lscr.io/linuxserver/openssh-server:latest
-
-docker run -d --name container2 -p 2223:2222 \
-  -e PUID=1000 -e PGID=1000 -e TZ=Etc/UTC \
-  -e PASSWORD_ACCESS=true \
-  -e USER_NAME=ansibleuser \
-  -e USER_PASSWORD=root \
-  -e SUDO_ACCESS=true \
-  -v ~/ansible-beginner-lab/config2:/config \
-  lscr.io/linuxserver/openssh-server:latest
+docker build -t ansible-ubuntu-ssh .
+docker run -d --name container1 -p 2222:22 ansible-ubuntu-ssh
+docker run -d --name container2 -p 2223:22 ansible-ubuntu-ssh
 ```
 
-Check logs:
+Check logs if needed:
 
 ```bash
 docker logs container1
@@ -84,14 +92,7 @@ docker logs container1
 
 → User: ansibleuser / Password: root
 
-## 5. Install Python in containers (needed for Ansible)
-
-```bash
-docker exec -it container1 ash -c "apk update && apk add python3 py3-pip sudo"
-docker exec -it container2 ash -c "apk update && apk add python3 py3-pip sudo"
-```
-
-## 6. Create inventory.ini
+## 5. Create inventory.ini
 
 For simplicity we use password auth here. Later you can upgrade to SSH keys (no password prompts).
 
@@ -100,13 +101,16 @@ For simplicity we use password auth here. Later you can upgrade to SSH keys (no 
 ansible_user=ansibleuser
 ansible_ssh_pass=root
 ansible_connection=ssh
+ansible_become=yes
+ansible_become_method=sudo
+ansible_become_pass=root
 
 [docker_targets]
 container1 ansible_host=127.0.0.1 ansible_port=2222
 container2 ansible_host=127.0.0.1 ansible_port=2223
 ```
 
-## 7. Test connectivity
+## 6. Test connectivity
 
 ```bash
 ansible -i inventory.ini docker_targets -m ping
@@ -125,7 +129,7 @@ Run `ssh ansibleuser@127.0.0.1 -p 2222` first, type `yes` to accept fingerprint,
 Repeat for port 2223.  
 Then retry ping.
 
-## 8. First playbook
+## 7. First playbook
 
 Create a new folder `playbooks` on the same level with `inventory.ini`, then a new file `playbooks/01-first-playbook.yml` with the following content:
 
@@ -135,9 +139,9 @@ Create a new folder `playbooks` on the same level with `inventory.ini`, then a n
   hosts: docker_targets
   become: yes
   tasks:
-    - name: Install fd
-      apk:
-        name: fd
+    - name: Install tree
+      apt:
+        name: tree
         state: present
         update_cache: yes
 
@@ -148,17 +152,43 @@ Create a new folder `playbooks` on the same level with `inventory.ini`, then a n
         mode: '0644'
 ```
 
-This playbook has two tasks, one to install the `fd` package, another for creating a `txt` file with a fixed content and permissions.
+This playbook has two tasks, one to install the `tree` package, which is not present by default in Ubuntu, then another task for creating a `txt` file with a fixed content and permissions. These tasks are based on different Ansible modules, `apt` is the package manager for Ubuntu/Debian distros, `copy` is a command to copy files or content to remote hosts.
 
-To install a package needs sudo access, `become: yes` does this for ansible, but we also have to enable sudo support in the inventory, so add the following to the `[docker_targets:vars]` section:
+All these Ansible modules are documented in the Ansible docs:
+  
+- **apt module** (install packages on Debian/Ubuntu):  
+  https://docs.ansible.com/ansible/latest/collections/ansible/builtin/apt_module.html
 
-```ini
-ansible_become=yes
-ansible_become_method=sudo
-ansible_become_pass=root
+- **copy module** (copy files or content to remote hosts):  
+  https://docs.ansible.com/ansible/latest/collections/ansible/builtin/copy_module.html
+
+- **All built-in modules** (search for others):  
+  https://docs.ansible.com/ansible/latest/collections/ansible/builtin/index.html
+
+- **Full Ansible documentation** (start here for more):  
+  https://docs.ansible.com/ansible/latest/index.html
+
+First, let's refresh the package manager cache (this is important):
+
+```bash
+ansible -i inventory.ini docker_targets -m command -a "apt-get update"
 ```
 
-We are ready to run the playbook, but before running the playbook for real, always test it in check mode with diff enabled:
+then check if `tree` is available on  the containers:
+
+```bash 
+ansible -i inventory.ini docker_targets -m command -a "tree --version"
+```
+
+You should see something like this, meaning that it is not installed:
+
+```bash
+(ansible-venv) user@ubuntu-wsl:~/ansible-beginner-lab$ ansible -i inventory.ini docker_targets -m command -a "tree --version"
+[ERROR]: Task failed: Module failed: Error executing command: [Errno 2] No such file or directory: b'tree'
+...
+```
+
+Before running the playbook for real, let's test it in check mode with diff enabled:
 
 ```bash
 ansible-playbook -i inventory.ini playbooks/01-first-playbook.yml --check --diff
@@ -168,7 +198,7 @@ What it does:
 - Shows what would change (green/red diff)
 - No actual changes made
 - Safe way to verify logic
-- Run it twice → second run should show no changes (idempotency)
+- It will also show issues early
 
 Only after dry run succeeds, do the real run:
 
@@ -178,19 +208,27 @@ ansible-playbook -i inventory.ini playbooks/01-first-playbook.yml
 
 Then verify:
 ```bash
-ansible -i inventory.ini docker_targets -m command -a "fd"
+ansible -i inventory.ini docker_targets -m command -a "tree --version"
 ```
 
 ```bash
 ansible -i inventory.ini docker_targets -m command -a "cat /tmp/ansible_test.txt"
 ```
 
-You should see a list of files and folders for the first command and "Ansible works!" for the second command.
+You should see the version of `tree` for the first command and `Ansible works!` for the second command.
 
 Now if you run the playbook again, it should return that all the changes are OK (already there), no changes done (ok=3 changed=0):
 
 ```bash
 ...
+
+TASK [Install tree] ******************************************************************************************************************
+ok: [container2]
+ok: [container1]
+
+******************************************************************************************************************
+ok: [container2]
+ok: [container1]
 
 PLAY RECAP ******************************************************************************************************************
 container1                 : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
@@ -201,22 +239,17 @@ container2                 : ok=3    changed=0    unreachable=0    failed=0    s
 
 - Docker command not found → enable WSL integration
 - Permission denied on docker.sock → add user to docker group + relogin
-- SSH connection reset → wrong port (must be 2222:2222, not 22)
-- /usr/bin/python3 not found → install python3 + py3-pip in containers
-- Missing sudo password → use ansible_become_pass
-- apt module fails → because image is Alpine (uses apk). Later: switch to Ubuntu.
 - to undo changes, you have two possibilites, pick one:
-  - stop and remove both containers and create them again, including installing python
+  - stop and remove both containers and create them again
   - connect using ssh to each container and remove the changes manually
     - remove file from `tmp`: `sudo rm /tmp/ansible_test.txt`
-    - uninstall `fd` package: `sudo apk del fd`
+    - uninstall `tree` package: `sudo apt remove tree`
 
 ## Additional steps
 
-At this stage, we have a basic idea about how Ansible works, we have simple example set up with Docker containers and a basic playbook. 
+At this stage, we have a basic idea about how Ansible works, we have a simple example set up with Docker containers and a basic playbook. 
 
 Take these additional steps to build on the current state and introduce new concepts:
-- Switch to Ubuntu containers
 - Use SSH keys instead of password
 - Variables, handlers, roles
 - Linting + Molecule testing
