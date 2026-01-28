@@ -692,5 +692,45 @@ yamllint .
 
 Fix errors/warnings (e.g. indentation, trailing spaces, new line at the end of the file, missing quotes, deprecated syntax).
 
-### A6. ???
+### A6. GitHub Actions: minimal useful setup
 
+Create `.github/workflows/lint.yml`:
+
+```yaml
+name: Lint Ansible code
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ansible ansible-lint yamllint
+
+      - name: Run yamllint
+        run: yamllint .
+
+      - name: Run ansible-lint
+        run: ansible-lint .
+
+      - name: Syntax check playbooks
+        run: ansible-playbook --syntax-check playbooks/*.yml
+```
+
+Push this file to GitHub.  
+It will run on every push/PR, check YAML syntax, ansible best practices, and style.  
+Check GitHub repo → Actions tab to see it run.
