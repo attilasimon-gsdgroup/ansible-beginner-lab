@@ -1,0 +1,6 @@
+---
+- name: Use role
+  hosts: docker_targets
+  become: yes
+  roles:
+    - webserver

@@ -1,0 +1,5 @@
+---
+package_name: tree
+test_file_content: |
+  Ansible variable test
+  Date: {{ ansible_facts['date_time']['date'] }}

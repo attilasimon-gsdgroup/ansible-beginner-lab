@@ -1,0 +1,16 @@
+---
+- name: Ansible playbook with variables
+  hosts: docker_targets
+  become: yes
+  tasks:
+    - name: Install package
+      apt:
+        name: "{{ package_name }}"
+        state: present
+        update_cache: yes
+
+    - name: Create file with variable content
+      copy:
+        content: "{{ test_file_content }}"
+        dest: /tmp/ansible_var_test.txt
+        mode: '0644'

@@ -260,7 +260,7 @@ At this stage, we have a basic idea about how Ansible works, we have a simple ex
 Take these additional steps to build on the current state and introduce new concepts:
 - Use SSH keys instead of password
 - Variables, handlers, roles
-- Linting + Molecule testing
+- Linting
 - GitHub Actions CI
 
 ### A1. Use SSH keys instead of password
@@ -341,3 +341,356 @@ ansible-playbook -i inventory.ini playbooks/01-first-playbook.yml --check --diff
 ansible-playbook -i inventory.ini playbooks/01-first-playbook.yml
 ```
 → no password prompt should appear
+
+### A2. Variables
+
+Create `group_vars/docker_targets.yml` in the project root:
+
+```yaml
+---
+package_name: tree
+test_file_content: |
+  Ansible variable test
+  Date: {{ ansible_facts['date_time']['date'] }}
+```
+
+Create new playbook (`playbooks/03-variables-playbook.yml`):
+
+```yaml
+---
+- name: Ansible playbook with variables
+  hosts: docker_targets
+  become: yes
+  tasks:
+    - name: Install package
+      apt:
+        name: "{{ package_name }}"
+        state: present
+        update_cache: yes
+
+    - name: Create file with variable content
+      copy:
+        content: "{{ test_file_content }}"
+        dest: /tmp/ansible_var_test.txt
+        mode: '0644'
+```
+
+Run dry + real:
+
+```bash
+ansible-playbook -i inventory.ini playbooks/03-variables-playbook.yml --check --diff
+ansible-playbook -i inventory.ini playbooks/03-variables-playbook.yml
+```
+
+The `tree` is most probably installed already from the first playbook, so when you run the commands above, you will see that the `Install package` is `OK`, meaning it is already done, no change needed.
+
+Verify the second task:
+
+```bash
+ansible -i inventory.ini docker_targets -m command -a "cat /tmp/ansible_var_test.txt"
+```
+
+We already used some variables in `02-copy-ssh-key.yml` too:
+```yaml
+# define variable (pub_key_path):
+vars:
+    pub_key_path: "~/.ssh/ansible_lab_key.pub"
+# ...
+# use:
+  - name: Copy public key to authorized_keys
+        authorized_key:
+          user: ansibleuser
+          key: "{{ lookup('file', pub_key_path) }}"
+          state: present
+          exclusive: no
+# a special ansible variable:
+          msg: "Public key copied to {{ inventory_hostname }}"
+```
+In this case the `pub_key_path` variable is used with the [`lookup` plugin](https://docs.ansible.com/projects/ansible/latest/plugins/lookup.html).
+
+The second variable, `inventory_hostname` is a [Special Ansible Variable](https://docs.ansible.com/projects/ansible/latest/reference_appendices/special_variables.html).
+
+More information: [Using variables](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_variables.html)
+
+### A3. Handlers
+
+→ Handlers are tasks that only run when **notified** by another task.  
+→ Notification happens only if the notifying task reports **changed** (not ok).  
+→ Handlers run **at the end of the play**, after all tasks, and only once per play (even if notified multiple times).  
+
+In the following playbook:
+- We'll have a handler to restart nginx whenever notified to do so
+- If any of the tasks (`Install nginx` or `Copy nginx config`) reports as changed → handler restarts nginx once at the end.
+- If both tasks are ok (already installed/configured) → no notification → no restart.  
+
+Create `playbooks/04-handlers.yml`:
+
+```yaml
+---
+- name: Playbook with handler
+  hosts: docker_targets
+  become: yes
+  tasks:
+    - name: Install nginx
+      apt:
+        name: nginx
+        state: present
+        update_cache: yes
+      notify: Restart nginx   # <--- calls handler if changed
+
+    - name: Copy nginx config
+      copy:
+        content: |
+          server {
+            listen 80;
+            server_name localhost;
+            location / {
+              return 200 "Hello from Ansible!\n";
+            }
+          }
+        dest: /etc/nginx/sites-available/default
+        mode: '0644'
+      notify: Restart nginx
+
+  handlers:
+    - name: Restart nginx
+      service:
+        name: nginx
+        state: restarted
+```
+
+#### How to test and verify how it works
+Run playbook → see handler in first run → second run no handler → force change + rerun to see it again.
+
+0. **Check the playbook** (optional):
+   ```
+   ansible-playbook -i inventory.ini playbooks/04-handlers.yml --check --diff
+   ```
+
+   - It shows what it would do, including diffs
+   - It will fail when testing the handler, because `nginx` is not installed (yet):
+   ```bash
+   [ERROR]: Task failed: Module failed: Could not find the requested service nginx: host
+   ```
+
+1. **Run the playbook once** (real run):
+   ```
+   ansible-playbook -i inventory.ini playbooks/04-handlers.yml
+   ```
+
+   - First run: both tasks changed → handler restarts nginx.
+   - Look for `RUNNING HANDLER [Restart nginx] ` in output.
+
+2. **Run it again**:
+   ```
+   ansible-playbook -i inventory.ini playbooks/04-handlers.yml
+   ```
+
+   - Both tasks ok → no notification → no handler run.
+
+3. **Force a change to trigger handler**:
+   - Manually stop nginx in one container:
+     ```
+     ansible -i inventory.ini container1 -m command -a "service nginx stop" -b
+     ```
+
+   - Run playbook again → copy task ok, but install task ok → **no restart** (handler only restarts if notified).
+
+   - check `nginx` status on both targets:
+     ```bash
+     ansible -i inventory.ini docker_targets -m command -a "service nginx status" -b
+     ```
+     Results should be: Container1 `* nginx is not running`, Container2 `* nginx is running`
+
+   - To force notification, make a small change (e.g. touch a dummy file)
+     ```yaml
+     - name: Force handler trigger
+       file:
+         path: /tmp/force-handler.txt
+         state: touch
+       notify: Restart nginx
+     ```
+
+   - Run → handler restarts nginx.
+
+4. **Check if nginx restarted**:
+   ```
+   ansible -i inventory.ini docker_targets -m command -a "service nginx status" -b
+   ```
+
+   Both containers should display: `* nginx is running`.
+
+### A4. Roles
+
+Roles are the main way to organize reusable Ansible code. Think of them as self-contained "modules" or "packages" for your automation.
+
+#### What is a role
+
+A role is a directory with a standard structure that bundles tasks, variables, files, templates, handlers etc. that belong together. Example:
+
+```text
+roles/
+  webserver/
+    tasks/
+      main.yml          # main tasks that run when role is included
+    handlers/
+      main.yml          # handlers that the tasks can notify
+    templates/
+      nginx.conf.j2     # Jinja2 templates
+    files/
+      static-file.txt   # plain files to copy
+    vars/
+      main.yml          # role-specific variables
+    defaults/
+      main.yml          # default variables (can be overridden)
+    meta/
+      main.yml          # dependencies on other roles
+```
+
+When you use a role in a playbook:
+```yaml
+- hosts: webservers
+  roles:
+    - webserver
+```
+Ansible automatically runs `roles/webserver/tasks/main.yml` (and pulls in handlers, templates etc. as needed).
+
+#### When / why should you use roles?
+Use roles when:
+- You repeat the same setup on multiple projects or hosts
+- You want clean, readable playbooks
+- You want to share/reuse code
+- You need to organize complexity
+- You plan to test or lint code
+
+You don't need roles for:
+
+- One-time 5-task playbook
+- Very simple ad-hoc stuff
+
+Rule of thumb: if you copy-paste tasks more than once → make a role.
+
+#### Working example for a role
+
+→ We'll call the role: `webserver`
+
+Create `playbooks/roles/webserver` folder structure from the project root:
+
+```bash
+mkdir -p playbooks/roles/webserver/{tasks,handlers,templates}
+```
+
+`playbooks/roles/webserver/tasks/main.yml`:
+
+```yaml
+---
+- name: Install nginx
+  apt:
+    name: nginx
+    state: present
+    update_cache: yes
+  notify: Restart nginx
+
+- name: Copy nginx config
+  template:
+    src: default.conf.j2
+    dest: /etc/nginx/sites-available/default
+    mode: '0644'
+  notify: Restart nginx
+```
+
+`playbooks/roles/webserver/handlers/main.yml`:
+
+```yaml
+---
+- name: Restart nginx
+  service:
+    name: nginx
+    state: restarted
+```
+
+`playbooks/roles/webserver/templates/default.conf.j2` (Jinja2 template):
+
+```jinja
+server {
+  listen 80;
+  server_name localhost;
+  location / {
+    return 200 "Hello from role!\n";
+  }
+}
+```
+
+New playbook `playbooks/05-roles.yml`:
+
+```yaml
+---
+- name: Use role
+  hosts: docker_targets
+  become: yes
+  roles:
+    - webserver
+```
+
+Run:
+
+```bash
+ansible-playbook -i inventory.ini playbooks/05-roles.yml --check --diff
+ansible-playbook -i inventory.ini playbooks/05-roles.yml
+```
+
+Verify:
+
+```bash
+ansible -i inventory.ini docker_targets -m uri -a "url=http://localhost return_content=yes"
+```
+
+### A5. Linting 
+
+We can use two tools for linting: `ansible-lint` and `yamllint`, to check for Ansible-related and YAML-related issues:
+- `ansible-lint` → focuses on Ansible-specific rules (playbooks, roles, modules, deprecated features, best practices).
+- `yamllint` → general YAML linter (indentation, line length, duplicate keys, syntax errors, style).
+
+#### Installation
+
+Install tools (in venv):
+
+```bash
+pip install ansible-lint yamllint
+```
+
+#### Configuration
+
+Create `.ansible-lint` and `.yamllint` in project root (minimal configs):
+
+**`.ansible-lint`**:
+```yaml
+exclude_paths:
+  - .git
+  - venv
+skip_list:
+  - name[no-name]  # allow unnamed tasks
+  - experimental  # ignore new rules
+```
+
+**`.yamllint`**:
+```yaml
+extends: relaxed
+rules:
+  line-length: disable
+  truthy: disable
+```
+
+#### Execution
+
+Run:
+
+```
+ansible-lint .
+yamllint .
+```
+
+Fix errors/warnings (e.g. indentation, trailing spaces, new line at the end of the file, missing quotes, deprecated syntax).
+
+### A6. ???
+

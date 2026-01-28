@@ -4,7 +4,7 @@
   become: yes
   tasks:
     - name: Install tree
-      package:
+      apt:
         name: tree
         state: present
         update_cache: yes
