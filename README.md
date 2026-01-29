@@ -692,7 +692,7 @@ yamllint .
 
 Fix errors/warnings (e.g. indentation, trailing spaces, new line at the end of the file, missing quotes, deprecated syntax).
 
-### A6. GitHub Actions: minimal useful setup
+### A6. GitHub Actions: Lint and Syntax Check
 
 Create `.github/workflows/lint.yml`:
 
@@ -734,3 +734,51 @@ jobs:
 Push this file to GitHub.  
 It will run on every push/PR, check YAML syntax, ansible best practices, and style.  
 Check GitHub repo → Actions tab to see it run.
+
+### A7. Encrypt secrets with Ansible Vault
+
+1. Create encrypted file for passwords (location is important):
+
+   ```bash
+   ansible-vault create group_vars/docker_targets/secrets.yml
+   ```
+
+   Enter vault password (remember it).
+
+2. Inside the editor:
+
+   ```yaml
+   ansible_become_pass: root
+   ansible_ssh_pass: root
+   ```
+
+3. Update inventory.ini — remove plaintext passwords, reference vault:
+
+   ```ini
+   [docker_targets:vars]
+   ansible_user=ansibleuser
+   ansible_ssh_private_key_file=~/.ssh/id_ed25519
+   ansible_connection=ssh
+   ansible_become=yes
+   ansible_become_method=sudo
+   # ansible_become_pass will be loaded from vault
+   ```
+
+4. Run with vault password:
+
+   ```
+   ansible-playbook -i inventory.ini playbooks/01-first-playbook.yml --vault-id @prompt
+   ```
+
+   Or use vault password file (for CI later):
+
+   ```
+   ansible-playbook -i inventory.ini playbooks/01-first-playbook.yml --vault-id vault_pass.txt
+   ```
+
+Using a vault resolves the problem of using plaintext secrets, especially on a repo.  
+Using a plain `vault_pass.txt` file can be insecure, so it is better to use the repo's secrets or environment variables solution, example on GitHub:
+```yaml
+- name: Run playbook with vault
+  run: ansible-playbook playbooks/*.yml --vault-id ${{ secrets.VAULT_PASSWORD }}
+```
